@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2-Player Ragdoll Battle</title>
+<style>
+html, body { margin:0; padding:0; overflow:hidden; height:100%; font-family:sans-serif; background:#222; color:white;}
+canvas { position:absolute; top:0; left:0; pointer-events:none; }
+
+#startBtn, #infoBtn, #backBtn {
+  position:absolute; left:50%;
+  transform:translateX(-50%);
+  padding:20px 40px; font-size:24px; cursor:pointer;
+  background:#0af; color:white; border:none; border-radius:10px;
+  z-index:10;
+}
+#startBtn { top:40%; }
+#infoBtn { top:55%; }
+#backBtn { top:70%; display:none; }
+
+#infoScreen {
+  position:absolute; top:0; left:0; width:100%; height:100%;
+  background:#222; color:white; font-size:24px; text-align:center;
+  display:none; z-index:9; padding-top:100px;
+}
+
+#health { position:absolute; top:20px; width:100%; text-align:center; font-size:18px; z-index:5;}
+#endScreen {
+  position:absolute; top:0; left:0; width:100%; height:100%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:48px; z-index:10; color:white; background:#222;
+  opacity:0; transform: scale(0.5);
+  transition: opacity 1s ease, transform 1s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+</style>
+</head>
+<body>
+<div id="health"></div>
+<div id="endScreen"></div>
+<canvas id="world"></canvas>
+
+<!-- Start & Info Buttons -->
+<button id="startBtn">Start Game</button>
+<button id="infoBtn">Info</button>
+
+<!-- Info Screen -->
+<div id="infoScreen">
+  <p>How to Play:</p>
+  <p>Player 1 Controls: A = Left, D = Right, W = Jump</p>
+  <p>Player 2 Controls: ArrowLeft = Left, ArrowRight = Right, ArrowUp = Jump</p>
+  <p>Each player has a weapon. Hit the other player to reduce their health.</p>
+  <p>The first player to reach 0 health loses!</p>
+</div>
+
+<!-- Back Button -->
+<button id="backBtn">Back</button>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+const { Engine, Render, Runner, World, Bodies, Body, Constraint, Events } = Matter;
+const canvas = document.getElementById('world');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const width = canvas.width, height = canvas.height;
+const engine = Engine.create();
+const world = engine.world;
+const render = Render.create({
+  canvas: canvas,
+  engine: engine,
+  options: { wireframes:false, background:'#222', width, height }
+});
+
+// Walls
+const thickness = 50;
+World.add(world, [
+  Bodies.rectangle(width/2, height+thickness/2, width, thickness, { isStatic:true }),
+  Bodies.rectangle(width/2, -thickness/2, width, thickness, { isStatic:true }),
+  Bodies.rectangle(-thickness/2, height/2, thickness, height, { isStatic:true }),
+  Bodies.rectangle(width+thickness/2, height/2, thickness, height, { isStatic:true })
+]);
+
+// Weapons
+const weaponTypes = [
+  { name:'sword', damage:5, create:(x,y)=>Bodies.rectangle(x,y,8,40,{render:{fillStyle:'silver'}}) },
+  { name:'mace', damage:8, create:(x,y)=>Bodies.circle(x,y,15,{render:{fillStyle:'gray'}}) },
+  { name:'knife', damage:3, create:(x,y)=>Bodies.rectangle(x,y,6,25,{render:{fillStyle:'yellow'}}) },
+  { name:'axe', damage:7, create:(x,y)=>Bodies.rectangle(x,y,12,35,{render:{fillStyle:'brown'}}) },
+  { name:'hammer', damage:9, create:(x,y)=>Bodies.rectangle(x,y,10,35,{render:{fillStyle:'#888'}}) },
+  { name:'club', damage:6, create:(x,y)=>Bodies.rectangle(x,y,10,40,{render:{fillStyle:'#654321'}}) },
+  { name:'dagger', damage:4, create:(x,y)=>Bodies.rectangle(x,y,5,25,{render:{fillStyle:'#eee'}}) },
+  { name:'flail', damage:10, create:(x,y)=>Bodies.circle(x,y,12,{render:{fillStyle:'#aaa'}}) }
+];
+
+let ragdoll1, ragdoll2, gameStarted=false;
+
+// Create upright ragdoll
+function createRagdoll(x, y, weaponSide='right') {
+  const ragdollId = (weaponSide === 'right') ? 1 : 2;
+  const collisionGroup = Body.nextGroup(true);
+
+  const head = Bodies.circle(x, y-60, 18, { mass:3, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup} });
+  const torso = Bodies.rectangle(x, y, 32, 80, { mass:1.5, chamfer:{radius:8}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup} });
+
+  const upperArmL = Bodies.rectangle(x-35, y-10, 14, 45, { mass:0.8, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup} });
+  const upperArmR = Bodies.rectangle(x+35, y-10, 14, 45, { mass:0.8, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup} });
+  const lowerArmL = Bodies.rectangle(x-35, y+25, 14, 45, { mass:0.7, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup} });
+  const lowerArmR = Bodies.rectangle(x+35, y+25, 14, 45, { mass:0.7, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup} });
+
+  const upperLegL = Bodies.rectangle(x-12, y+70, 18, 60, { mass:1.2, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup}, angle:0 });
+  const upperLegR = Bodies.rectangle(x+12, y+70, 18, 60, { mass:1.2, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup}, angle:0 });
+  const lowerLegL = Bodies.rectangle(x-12, y+130, 18, 60, { mass:1, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup}, angle:0 });
+  const lowerLegR = Bodies.rectangle(x+12, y+130, 18, 60, { mass:1, chamfer:{radius:7}, render:{fillStyle:'#ffccaa'}, ragdollId, collisionFilter:{group:collisionGroup}, angle:0 });
+
+  const parts = [head, torso, upperArmL, upperArmR, lowerArmL, lowerArmR, upperLegL, upperLegR, lowerLegL, lowerLegR];
+
+  const constraints = [
+    Constraint.create({ bodyA: head, bodyB: torso, pointA:{x:0,y:18}, pointB:{x:0,y:-40}, stiffness:0.99, damping:0.2 }),
+    Constraint.create({ bodyA: torso, bodyB: upperArmL, pointA:{x:-15,y:-30}, pointB:{x:0,y:-22}, stiffness:0.85, damping:0.05 }),
+    Constraint.create({ bodyA: torso, bodyB: upperArmR, pointA:{x:15,y:-30}, pointB:{x:0,y:-22}, stiffness:0.85, damping:0.05 }),
+    Constraint.create({ bodyA: upperArmL, bodyB: lowerArmL, pointA:{x:0,y:22}, pointB:{x:0,y:-22}, stiffness:0.85, damping:0.05 }),
+    Constraint.create({ bodyA: upperArmR, bodyB: lowerArmR, pointA:{x:0,y:22}, pointB:{x:0,y:-22}, stiffness:0.85, damping:0.05 }),
+    Constraint.create({ bodyA: torso, bodyB: upperLegL, pointA:{x:-10,y:40}, pointB:{x:0,y:-30}, stiffness:0.95, damping:0.1 }),
+    Constraint.create({ bodyA: torso, bodyB: upperLegR, pointA:{x:10,y:40}, pointB:{x:0,y:-30}, stiffness:0.95, damping:0.1 }),
+    Constraint.create({ bodyA: upperLegL, bodyB: lowerLegL, pointA:{x:0,y:30}, pointB:{x:0,y:-30}, stiffness:0.95, damping:0.1 }),
+    Constraint.create({ bodyA: upperLegR, bodyB: lowerLegR, pointA:{x:0,y:30}, pointB:{x:0,y:-30}, stiffness:0.95, damping:0.1 })
+  ];
+
+  const w = weaponTypes[Math.floor(Math.random()*weaponTypes.length)];
+  const weapon = w.create(x + (weaponSide==='right'?35:-35), y+25);
+  weapon.damage = w.damage;
+  weapon.name = w.name;
+  weapon.ownerRagdollId = ragdollId;
+  weapon.collisionFilter.group = collisionGroup;
+  const arm = (weaponSide==='right') ? lowerArmR : lowerArmL;
+  const weaponConstraint = Constraint.create({ bodyA: arm, pointA:{x:0,y:22}, bodyB: weapon, pointB:{x:0,y:-12}, stiffness:1, length:0 });
+
+  World.add(world, parts);
+  World.add(world, constraints);
+  World.add(world, weapon);
+  World.add(world, weaponConstraint);
+
+  return { parts, torso, constraints, weapon, health:200, controls:{left:false,right:false,jump:false}, head };
+}
+
+// Game functions
+function hideRagdolls() { [ragdoll1, ragdoll2].forEach(r=>{ if(!r) return; r.parts.forEach(p=>World.remove(world,p)); if(r.weapon) World.remove(world,r.weapon); }); }
+function showEndScreen(text, color) { hideRagdolls(); const endScreen=document.getElementById('endScreen'); endScreen.innerText=text; endScreen.style.backgroundColor=color; endScreen.style.display='flex'; requestAnimationFrame(()=>{ endScreen.style.opacity='1'; endScreen.style.transform='scale(1)'; }); }
+
+function startGame() {
+  if(gameStarted) return; gameStarted=true;
+  document.getElementById('startBtn').style.display='none';
+  document.getElementById('infoBtn').style.display='none';
+  document.getElementById('backBtn').style.display='none';
+  document.getElementById('infoScreen').style.display='none';
+  ragdoll1=createRagdoll(width/3,height/2,'right');
+  ragdoll2=createRagdoll(2*width/3,height/2,'left');
+  Render.run(render);
+  Runner.run(Runner.create(),engine);
+  setupGameEvents();
+}
+
+function setupGameEvents() {
+  document.addEventListener('keydown', e=>{
+    switch(e.key){ 
+      case 'a': ragdoll1.controls.left=true; break; 
+      case 'd': ragdoll1.controls.right=true; break; 
+      case 'w': ragdoll1.controls.jump=true; break;
+      case 'ArrowLeft': ragdoll2.controls.left=true; break; 
+      case 'ArrowRight': ragdoll2.controls.right=true; break; 
+      case 'ArrowUp': ragdoll2.controls.jump=true; break; 
+    } 
+  });
+  document.addEventListener('keyup', e=>{
+    switch(e.key){ 
+      case 'a': ragdoll1.controls.left=false; break; 
+      case 'd': ragdoll1.controls.right=false; break; 
+      case 'w': ragdoll1.controls.jump=false; break;
+      case 'ArrowLeft': ragdoll2.controls.left=false; break; 
+      case 'ArrowRight': ragdoll2.controls.right=false; break; 
+      case 'ArrowUp': ragdoll2.controls.jump=false; break; 
+    } 
+  });
+
+  Events.on(engine,'beforeUpdate', ()=>{
+    [ragdoll1, ragdoll2].forEach(r=>{
+      const torsoAngle = r.torso.angle;
+      Body.setAngularVelocity(r.torso, -torsoAngle*0.2);
+      if(r.controls.left) Body.applyForce(r.head,r.head.position,{x:-0.003,y:0});
+      if(r.controls.right) Body.applyForce(r.head,r.head.position,{x:0.003,y:0});
+      if(r.controls.jump) Body.applyForce(r.head,r.head.position,{x:0,y:-0.02});
+    });
+  });
+
+  Events.on(engine,'collisionStart', event=>{
+    event.pairs.forEach(p=>{
+      [p.bodyA,p.bodyB].forEach(weapon=>{
+        if(weapon.damage){
+          [ragdoll1,ragdoll2].forEach(target=>{
+            const isOwner = target.parts.some(part=>part.ragdollId===weapon.ownerRagdollId);
+            if(!isOwner){
+              target.health-=weapon.damage;
+              if(target.health<0) target.health=0;
+              Body.applyForce(target.torso,target.torso.position,{x:(target.torso.position.x-weapon.position.x)*0.0005,y:-0.002});
+            }
+          });
+        }
+      });
+    });
+  });
+
+  Events.on(render,'afterRender', ()=>{
+    const ctx = render.context;
+    [[ragdoll1,'red'],[ragdoll2,'blue']].forEach(([r,color])=>{
+      const x=r.torso.position.x, y=r.torso.position.y-90;
+      ctx.fillStyle='grey'; ctx.fillRect(x-25,y,50,6);
+      ctx.fillStyle=color; ctx.fillRect(x-25,y,50*Math.max(r.health/200,0),6);
+    });
+
+    // Health + weapon info
+    const healthDiv = document.getElementById('health');
+    healthDiv.innerHTML = `
+      Player 1 Health: ${ragdoll1.health} | Weapon: ${ragdoll1.weapon ? ragdoll1.weapon.name : 'none'} (${ragdoll1.weapon ? ragdoll1.weapon.damage : 0})<br>
+      Player 2 Health: ${ragdoll2.health} | Weapon: ${ragdoll2.weapon ? ragdoll2.weapon.name : 'none'} (${ragdoll2.weapon ? ragdoll2.weapon.damage : 0})
+    `;
+
+    if(ragdoll1.health<=0) showEndScreen('Player 2 Wins!', 'blue');
+    if(ragdoll2.health<=0) showEndScreen('Player 1 Wins!', 'red');
+  });
+}
+
+// Info & Back button functionality
+document.getElementById('infoBtn').addEventListener('click', ()=>{
+  document.getElementById('startBtn').style.display='none';
+  document.getElementById('infoBtn').style.display='none';
+  document.getElementById('infoScreen').style.display='block';
+  document.getElementById('backBtn').style.display='block';
+});
+document.getElementById('backBtn').addEventListener('click', ()=>{
+  document.getElementById('startBtn').style.display='block';
+  document.getElementById('infoBtn').style.display='block';
+  document.getElementById('infoScreen').style.display='none';
+  document.getElementById('backBtn').style.display='none';
+});
+
+document.getElementById('startBtn').addEventListener('click', startGame);
+</script>
+</body>
+</html>
